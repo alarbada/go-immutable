@@ -1,43 +1,40 @@
-package example
+# go-immutable
 
-import (
-	"fmt"
-	"go-immutable/example/mod1"
-)
+A linter and naming convention to enforce immutability by default in go programs.
 
-func (User) ChangeSomething(mutFuncVar int) {
+# What does this do? 
+
+
+```go
+
+func test1() {
+	a := 1
+	a = 2 // this will trigger an error, variables are immutable by default
+
+	_ = a
 }
 
-func changeUser(u User, mutLolWhat int) {
-	mutLolWhat = 4
 
-	u.Name = "John"
+func test2() {
+	mutA := 1
+	mutA = 2 // this will not, because it is declared as mutable
+
+	_ = mutA
 }
 
-func test() {
-	immutableVariable := 3
-	mutableVariable := 4
 
-	changeLol(immutableVariable, mutableVariable)
-
-	mod1.ChangeSomething(immutableVariable)
-
-	var lol mod1.LolWhat
-	lol.ChangeSomething(immutableVariable)
-
-	mutVariable := immutableVariable
-	var user User
-	user.ChangeSomething(mutVariable)
-}
-
-func mutateVariable(arg *int) {
-	*arg = 5
+// Declaring mutArg as (mut)able, 
+func mutateVariable(mutArg *int) {
+	*mutArg = 5
 }
 
 func test3() {
 	variable := 3
-	mutateVariable(&variable)
+	mutVariable := 3
+	mutateVariable(&variable) // this will trigger an error
+	mutateVariable(&mutVariable) // this will not
 }
+
 
 type User struct {
 	Name string
@@ -48,12 +45,13 @@ func (mutUser *User) ChangeName() {
 }
 
 func test4() {
-	user := User{}
+	user go:= User{}
 	mutUser := User{}
 
 	user.ChangeName()    // This triggers an error
 	mutUser.ChangeName() // This will not
 }
+
 
 func test5() {
 	// Same for slices and maps
@@ -85,6 +83,15 @@ func test6() {
 	_, _, err = doSomething() // This will not trigger an error
 }
 
+type Manager struct {
+	Name string
+}
+
+func (mutManager *Manager) ChangeName() {
+	mutManager.Name = "John"
+}
+
+
 func test7() {
 	mutName := "John"
 
@@ -101,9 +108,9 @@ func test7() {
 	_ = mutName
 
 
-	user := User{}
+	manager := Manager{}
 
-	go user.ChangeName() // this will also trigger an error, user is passed as a mutable reference
+	go manager.ChangeName() // this will also trigger an error, user is passed as a mutable reference
 
 
 	name := "John"
@@ -113,3 +120,5 @@ func test7() {
 		fmt.Println(name)
 	}()
 }
+
+```

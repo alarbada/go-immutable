@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"strings"
 
+	"github.com/gookit/goutil/dump"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -31,7 +32,6 @@ func main() {
 		for _, file := range pkg.Syntax {
 			ast.Inspect(file, func(n ast.Node) bool {
 				switch x := n.(type) {
-
 				case *ast.FuncDecl:
 					if x.Type.Params != nil {
 						var params []string
@@ -56,6 +56,12 @@ func main() {
 
 			ast.Inspect(file, func(n ast.Node) bool {
 				switch x := n.(type) {
+				case *ast.FuncDecl:
+					ast.Inspect(x.Body, func(n ast.Node) bool {
+						dump.P(n.Pos())
+						return true
+					})
+
 				case *ast.CallExpr:
 					id := constructIdentifier(x, pkg, file)
 					params, ok := funcParams[id]
@@ -66,33 +72,36 @@ func main() {
 					for i, arg := range x.Args {
 						currParam := params[i]
 						if arg, ok := arg.(*ast.Ident); ok {
-							isCurrParamMut := strings.HasPrefix(currParam, "mut") || strings.HasPrefix(currParam, "Mut")
-
-							isArgMut := strings.HasPrefix(arg.Name, "mut") || strings.HasPrefix(arg.Name, "Mut")
-
-							if isCurrParamMut && !isArgMut {
-								fmt.Printf("%s: Argument '%s' should be prefixed with 'mut' or 'Mut'\n", fset.Position(arg.Pos()), arg.Name)
+							if checkArgument(fset, currParam, arg) {
+								return true
 							}
 						}
 					}
+
 				case *ast.AssignStmt:
 					if len(x.Lhs) == 1 && len(x.Rhs) == 1 {
 						if ident, ok := x.Lhs[0].(*ast.Ident); ok && !ident.IsExported() {
 							// Check if it's a new variable declaration with :=
-
-							if x.Tok == token.DEFINE { // token.DEFINE represents the ':=' operator
-								return true // Skip new variable declarations with :=
+							if x.Tok == token.DEFINE {
+								return true
 							}
-							checkVariableName(fset, ident.Name, ident.Pos())
+							if checkVariableName(fset, ident.Name, ident.Pos()) {
+								return true
+							}
 						}
 					}
 					for _, lhs := range x.Lhs {
 						switch v := lhs.(type) {
 						case *ast.Ident: // Variable
-							checkVariableName(fset, v.Name, v.Pos())
+							if checkVariableName(fset, v.Name, v.Pos()) {
+								fmt.Println(lhs)
+								return true
+							}
 						case *ast.SelectorExpr: // Struct field
 							if ident, ok := v.X.(*ast.Ident); ok {
-								checkStructName(fset, ident.Name, v.Sel.Name, v.Sel.Pos())
+								if checkStructName(fset, ident.Name, v.Sel.Name, v.Sel.Pos()) {
+									return true
+								}
 							}
 						}
 					}
@@ -116,21 +125,62 @@ func getFuncDeclId(pkg *packages.Package, x *ast.FuncDecl) string {
 	return funcDeclId
 }
 
-func checkStructName(fset *token.FileSet, structName, fieldName string, pos token.Pos) {
+func checkStructName(
+	fset *token.FileSet,
+	structName, fieldName string,
+	pos token.Pos,
+) (checked bool) {
+
 	if !strings.HasPrefix(fieldName, "mut") && !strings.HasPrefix(fieldName, "Mut") {
 		name := structName + "." + fieldName
-		fmt.Printf("%s: Variable '%s' should be prefixed with 'mut' or 'Mut'\n", fset.Position(pos), name)
+
+		fmt.Println("checkStructName")
+		fmt.Printf(
+			"%s: Variable '%s' should be prefixed with 'mut' or 'Mut'\n",
+			fset.Position(pos), name,
+		)
+		return true
 	}
+
+	return false
 }
 
-func checkVariableName(fset *token.FileSet, name string, pos token.Pos) {
+func checkVariableName(fset *token.FileSet, name string, pos token.Pos) (checked bool) {
 	if name == "_" {
-		return
+		return false
 	}
 
 	if !strings.HasPrefix(name, "mut") && !strings.HasPrefix(name, "Mut") {
-		fmt.Printf("%s: Variable '%s' should be prefixed with 'mut' or 'Mut'\n", fset.Position(pos), name)
+		fmt.Println("checkVariableName")
+		fmt.Printf(
+			"%s: Variable '%s' should be prefixed with 'mut' or 'Mut'\n",
+			fset.Position(pos), name,
+		)
+		return true
 	}
+
+	return false
+}
+
+func checkArgument(
+	fset *token.FileSet,
+	currParam string,
+	arg *ast.Ident,
+) (checked bool) {
+	isCurrParamMut := strings.HasPrefix(currParam, "mut") || strings.HasPrefix(currParam, "Mut")
+
+	isArgMut := strings.HasPrefix(arg.Name, "mut") || strings.HasPrefix(arg.Name, "Mut")
+
+	if isCurrParamMut && !isArgMut {
+		fmt.Println("checkArgument")
+		fmt.Printf(
+			"%s: Argument '%s' should be prefixed with 'mut' or 'Mut'\n",
+			fset.Position(arg.Pos()), arg.Name,
+		)
+		return true
+	}
+
+	return false
 }
 
 func isPackageName(name string, file *ast.File) bool {
@@ -155,7 +205,11 @@ func isPackageName(name string, file *ast.File) bool {
 	return false
 }
 
-func constructIdentifier(callExpr *ast.CallExpr, currPkg *packages.Package, file *ast.File) string {
+func constructIdentifier(
+	callExpr *ast.CallExpr,
+	currPkg *packages.Package,
+	file *ast.File,
+) string {
 	currentPkgId := currPkg.ID
 
 	switch fun := callExpr.Fun.(type) {
@@ -236,4 +290,35 @@ func handlePanic(fn func()) (err error) {
 	}()
 	fn()
 	return nil
+}
+
+func processFunctionDecl(fDecl *ast.FuncDecl) {
+	funcScope := make(map[string]bool)
+
+	if fDecl.Type.Params != nil {
+		for _, p := range fDecl.Type.Params.List {
+			for _, n := range p.Names {
+				funcScope[n.Name] = true
+			}
+		}
+	}
+
+	// Traverse the function body
+	ast.Inspect(fDecl.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			// Handle assignments
+			for _, lhs := range x.Lhs {
+				if ident, ok := lhs.(*ast.Ident); ok {
+					_, declared := funcScope[ident.Name]
+					if x.Tok == token.DEFINE && !declared {
+						// New declaration
+						funcScope[ident.Name] = true
+					}
+
+				}
+			}
+		}
+		return true
+	})
 }
